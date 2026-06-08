@@ -75,6 +75,16 @@ def test_bad_bool_raises():
         Settings.from_env({"HOME_MCP_TOKEN": STRONG, "HOME_MCP_PROTECT_SELF": "maybe"})
 
 
+def test_json_response_defaults_true():
+    settings = Settings.from_env({"HOME_MCP_TOKEN": STRONG})
+    assert settings.json_response is True
+
+
+def test_json_response_can_disable():
+    settings = Settings.from_env({"HOME_MCP_TOKEN": STRONG, "HOME_MCP_JSON_RESPONSE": "false"})
+    assert settings.json_response is False
+
+
 def test_ip_allowlist_parsing():
     settings = Settings.from_env(
         {"HOME_MCP_TOKEN": STRONG, "HOME_MCP_IP_ALLOWLIST": "10.0.0.0/8, 100.64.0.0/10"}

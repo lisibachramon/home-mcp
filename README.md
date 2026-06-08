@@ -39,41 +39,51 @@ setting `HOME_MCP_TOKENS=new,old`, switching clients over, then dropping `old`.
 ## Architecture
 
 ```
-  Claude session ──HTTPS──▶  Reverse proxy ──HTTP──▶  home-mcp  ──▶  Docker socket
- (Bearer token)            (Caddy / nginx /         (this app)  ──▶  docker compose + git
-                            Cloudflare / VPN)                    ──▶  gh CLI ──▶ GitHub
+  Claude session ──HTTPS──▶  nginx-proxy +   ──HTTP──▶  home-mcp  ──▶  Docker socket
+ (Bearer token)            letsencrypt-companion       (this app) ──▶  docker compose + git
+                            (shared proxy_default net)             ──▶  gh CLI ──▶ GitHub
 ```
+
+The container publishes no host ports; only the proxy reaches it over the shared
+`proxy_default` network, and the bearer token is enforced on every request.
 
 ---
 
-## Quick start (Docker + Caddy auto-HTTPS)
+## Deploy (CI → GHCR → SSH, behind nginx-proxy)
 
-Prerequisites: a host running Docker, a domain pointing at it, ports 80/443 open.
+Assumes your server already runs jwilder/nginx-proxy + acme/letsencrypt-companion
+on an external `proxy_default` network and is logged into GHCR. `docker-compose.yml`
+joins that network and sets `VIRTUAL_HOST`/`LETSENCRYPT_HOST` from `HOME_MCP_DOMAIN`,
+so the proxy routes `https://HOME_MCP_DOMAIN` to the container and the companion
+issues the cert. No host ports are published.
 
-```bash
-git clone https://github.com/lisibachramon/home-mcp.git
-cd home-mcp
-cp .env.example .env
+`.github/workflows/deploy.yml` does it all on push to `main` (or via the
+Actions "Run workflow" button): build the image → push to GHCR → render `.env`
+from repo secrets → scp `docker-compose.yml` + `.env` to `REMOTE_DIR` → `docker
+compose pull && up -d` over SSH.
 
-# 1) Generate a strong token and put it in .env
-python scripts/gen_token.py        # copy output into HOME_MCP_TOKEN=
-
-# 2) Edit .env: set HOME_MCP_DOMAIN, your HOME_MCP_PROJECTS / STACKS_DIR, and
-#    a GH_TOKEN (fine-grained PAT) if you want GitHub control.
-
-# 3) Launch the server + Caddy (Caddy fetches a real TLS cert automatically)
-docker compose --profile caddy up -d --build
-```
-
-Verify it's up (health needs no auth; `/mcp` requires the token):
+**One-time: set the repo secrets** (see "Required secrets" below), then push to
+`main`. Verify once it's up (health needs no auth; `/mcp` requires the token):
 
 ```bash
-curl https://home-mcp.example.com/healthz
+curl https://mcp.example.com/healthz
 # {"status":"ok","server":"home-mcp","version":"0.1.0"}
 ```
 
-Already have your own proxy/tunnel? Run just the app with `docker compose up -d`
-and point your proxy at the container.
+### Required secrets (GitHub → repo → Settings → Secrets → Actions)
+
+| Secret | Purpose |
+| --- | --- |
+| `HOME_MCP_TOKEN` | Bearer token Claude presents (generate with `scripts/gen_token.py`). |
+| `HOME_MCP_DOMAIN` | The vhost, e.g. `mcp.example.com` (drives `VIRTUAL_HOST`/cert). |
+| `LETSENCRYPT_EMAIL` | Email for the TLS certificate. |
+| `SSH_HOST`, `SSH_USER`, `SSH_PW` | SSH access for the deploy step. |
+| `GH_TOKEN` *(optional)* | PAT so home-mcp's `gh_*` tools can drive GitHub. |
+| `HOME_MCP_PROJECTS`, `STACKS_DIR` *(optional)* | Compose projects home-mcp may deploy. |
+| `HOME_MCP_IP_ALLOWLIST` *(optional)* | Restrict source IPs/CIDRs (e.g. your VPN). |
+
+> No proxy yet? `deploy/Caddyfile` and `deploy/nginx.conf` are standalone
+> alternatives — run one of those in front and skip the nginx-proxy bits.
 
 ---
 
@@ -125,7 +135,8 @@ All configuration is via environment variables (see `.env.example`).
 | `HOME_MCP_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address. |
 | `HOME_MCP_PORT` | `8848` | Bind port. |
 | `HOME_MCP_PATH` | `/mcp` | MCP endpoint path. |
-| `HOME_MCP_DOMAIN` | — | Domain for the bundled Caddy proxy. |
+| `HOME_MCP_DOMAIN` | — | The vhost; sets `VIRTUAL_HOST`/`LETSENCRYPT_HOST` for nginx-proxy. |
+| `HOME_MCP_JSON_RESPONSE` | `true` | Return JSON (not SSE) — friendlier behind nginx-proxy. |
 | `HOME_MCP_IP_ALLOWLIST` | — | Comma-separated IPs/CIDRs allowed to connect. |
 | `HOME_MCP_TRUST_PROXY` | `true` | Trust `X-Forwarded-For`/`X-Real-IP` from the proxy. |
 | `HOME_MCP_PROJECTS` | — | Named deploy projects: JSON `{name:path}` or `name=path,...`. |

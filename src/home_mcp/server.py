@@ -37,7 +37,7 @@ def build_mcp(settings: Settings) -> FastMCP:
         SERVER_NAME,
         instructions=INSTRUCTIONS,
         stateless_http=True,
-        json_response=False,
+        json_response=settings.json_response,
     )
     mcp.settings.streamable_http_path = settings.streamable_path
 

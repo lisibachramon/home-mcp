@@ -106,6 +106,8 @@ class Settings:
 
     ip_allowlist: tuple[str, ...] = ()
     trust_proxy: bool = True
+    # JSON responses (vs SSE) play nicest behind a buffering proxy like nginx-proxy.
+    json_response: bool = True
 
     enable_docker: bool = True
     enable_compose: bool = True
@@ -146,6 +148,7 @@ class Settings:
             self_container=(env.get("HOME_MCP_SELF_CONTAINER") or "").strip() or None,
             ip_allowlist=_split_csv(env.get("HOME_MCP_IP_ALLOWLIST")),
             trust_proxy=_get_bool(env, "HOME_MCP_TRUST_PROXY", True),
+            json_response=_get_bool(env, "HOME_MCP_JSON_RESPONSE", True),
             enable_docker=_get_bool(env, "HOME_MCP_ENABLE_DOCKER", True),
             enable_compose=_get_bool(env, "HOME_MCP_ENABLE_COMPOSE", True),
             enable_gh=_get_bool(env, "HOME_MCP_ENABLE_GH", True),

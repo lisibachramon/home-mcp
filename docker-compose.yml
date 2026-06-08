@@ -1,56 +1,44 @@
-# home-mcp deployment.
+# home-mcp production deployment.
 #
-#   docker compose up -d                  # server only (put your own proxy in front)
-#   docker compose --profile caddy up -d  # server + Caddy auto-HTTPS reverse proxy
+# Mirrors the shorts stack: jwilder/nginx-proxy + acme/letsencrypt-companion
+# (already running on this host) route the vhost to this container over the
+# shared external `proxy_default` network. The container publishes NO host
+# ports — only the proxy can reach it — and the bearer token is always enforced
+# by the app, so it's never exposed to the public.
 #
-# Security notes:
-#   * The home-mcp service is NOT published to the host. Only the reverse proxy
-#     (Caddy here) can reach it, over the internal "edge" network.
-#   * TLS is terminated at the proxy; the bearer token is always enforced by the
-#     app itself, so even a misconfigured proxy can't expose it unauthenticated.
-#   * Mount your compose project directories at the SAME path inside the
-#     container as on the host (see STACKS_DIR) so bind mounts and
-#     --project-directory resolve identically.
+# The image is built and pushed to GHCR by .github/workflows/deploy.yml; the
+# server just pulls it (it's already `docker login ghcr.io`'d). Routine deploy:
+#   docker compose pull && docker compose up -d --remove-orphans
+#
+# .env (rendered by CI from repo secrets) provides HOME_MCP_TOKEN, HOME_MCP_DOMAIN,
+# LETSENCRYPT_EMAIL, HOME_MCP_IMAGE, and any optional settings.
+
+name: home-mcp
 
 services:
   home-mcp:
-    build: .
-    image: home-mcp:latest
+    image: ${HOME_MCP_IMAGE:-ghcr.io/lisibachramon/home-mcp:latest}
     container_name: home-mcp
     restart: unless-stopped
     env_file: .env
     environment:
-      HOME_MCP_HOST: "0.0.0.0"        # reachable by the proxy on the internal network
+      HOME_MCP_HOST: "0.0.0.0"          # reachable by nginx-proxy on proxy_default
       HOME_MCP_SELF_CONTAINER: "home-mcp"
+      HOME_MCP_TRUST_PROXY: "true"
+      # nginx-proxy routing + letsencrypt-companion certificate
+      VIRTUAL_HOST: ${HOME_MCP_DOMAIN}
+      VIRTUAL_PORT: "8848"
+      LETSENCRYPT_HOST: ${HOME_MCP_DOMAIN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock          # control the host's Docker
-      - ${STACKS_DIR:-/srv/stacks}:${STACKS_DIR:-/srv/stacks}:rw  # your compose projects
+      - ${STACKS_DIR:-/srv/stacks}:${STACKS_DIR:-/srv/stacks}:rw  # compose projects to deploy
       # Optional: reuse the host's gh login instead of GH_TOKEN in .env
       # - ${HOME}/.config/gh:/root/.config/gh:ro
-    networks: [edge]
-    expose:
-      - "8848"
-
-  caddy:
-    image: caddy:2
-    container_name: home-mcp-caddy
-    restart: unless-stopped
-    depends_on: [home-mcp]
-    profiles: [caddy]
-    environment:
-      HOME_MCP_DOMAIN: ${HOME_MCP_DOMAIN:?set HOME_MCP_DOMAIN in .env}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks: [edge]
+    networks:
+      - proxy_default
 
 networks:
-  edge: {}
-
-volumes:
-  caddy_data: {}
-  caddy_config: {}
+  # The network the running nginx-proxy/letsencrypt-companion stack lives on.
+  proxy_default:
+    external: true

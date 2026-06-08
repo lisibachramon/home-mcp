@@ -1,0 +1,108 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-home-mcp
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/lisibachramon/home-mcp
+  COMPOSE_PATH: docker-compose.yml   # the prod compose file in this repo
+  REMOTE_DIR: /srv/home-mcp          # where compose+.env live on the server
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render .env from secrets
+        env:
+          HOME_MCP_TOKEN: ${{ secrets.HOME_MCP_TOKEN }}
+          HOME_MCP_DOMAIN: ${{ secrets.HOME_MCP_DOMAIN }}
+          LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+          HOME_MCP_PROJECTS: ${{ secrets.HOME_MCP_PROJECTS }}
+          STACKS_DIR: ${{ secrets.STACKS_DIR }}
+          HOME_MCP_IP_ALLOWLIST: ${{ secrets.HOME_MCP_IP_ALLOWLIST }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          umask 077
+          : > .env
+          # Only write keys that have a value, so the compose ${VAR:-default}
+          # fallbacks still apply for anything left unset.
+          add() { [ -n "$2" ] && printf '%s=%s\n' "$1" "$2" >> .env || true; }
+          add HOME_MCP_IMAGE "${IMAGE}:${GITHUB_SHA}"   # pin the exact build
+          add HOME_MCP_TOKEN "$HOME_MCP_TOKEN"
+          add HOME_MCP_DOMAIN "$HOME_MCP_DOMAIN"
+          add LETSENCRYPT_EMAIL "$LETSENCRYPT_EMAIL"
+          add HOME_MCP_PROJECTS "$HOME_MCP_PROJECTS"
+          add STACKS_DIR "$STACKS_DIR"
+          add HOME_MCP_IP_ALLOWLIST "$HOME_MCP_IP_ALLOWLIST"
+          add GH_TOKEN "$GH_TOKEN"
+          test -s .env || { echo "::error::.env is empty — is HOME_MCP_TOKEN set?"; exit 1; }
+          mkdir -p out
+          cp "$COMPOSE_PATH" out/docker-compose.yml
+          mv .env out/.env
+          echo "rendered $(grep -c = out/.env) env keys"
+
+      - name: Ensure remote dir
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PW }}
+          script: mkdir -p ${{ env.REMOTE_DIR }}
+
+      - name: Copy compose + .env to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PW }}
+          source: "out/docker-compose.yml,out/.env"
+          target: ${{ env.REMOTE_DIR }}
+          strip_components: 1
+          overwrite: true
+
+      - name: Pull + deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PW }}
+          command_timeout: "30m"
+          script: |
+            set -e
+            cd "${{ env.REMOTE_DIR }}"
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f
