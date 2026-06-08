@@ -1,0 +1,56 @@
+# home-mcp deployment.
+#
+#   docker compose up -d                  # server only (put your own proxy in front)
+#   docker compose --profile caddy up -d  # server + Caddy auto-HTTPS reverse proxy
+#
+# Security notes:
+#   * The home-mcp service is NOT published to the host. Only the reverse proxy
+#     (Caddy here) can reach it, over the internal "edge" network.
+#   * TLS is terminated at the proxy; the bearer token is always enforced by the
+#     app itself, so even a misconfigured proxy can't expose it unauthenticated.
+#   * Mount your compose project directories at the SAME path inside the
+#     container as on the host (see STACKS_DIR) so bind mounts and
+#     --project-directory resolve identically.
+
+services:
+  home-mcp:
+    build: .
+    image: home-mcp:latest
+    container_name: home-mcp
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOME_MCP_HOST: "0.0.0.0"        # reachable by the proxy on the internal network
+      HOME_MCP_SELF_CONTAINER: "home-mcp"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock          # control the host's Docker
+      - ${STACKS_DIR:-/srv/stacks}:${STACKS_DIR:-/srv/stacks}:rw  # your compose projects
+      # Optional: reuse the host's gh login instead of GH_TOKEN in .env
+      # - ${HOME}/.config/gh:/root/.config/gh:ro
+    networks: [edge]
+    expose:
+      - "8848"
+
+  caddy:
+    image: caddy:2
+    container_name: home-mcp-caddy
+    restart: unless-stopped
+    depends_on: [home-mcp]
+    profiles: [caddy]
+    environment:
+      HOME_MCP_DOMAIN: ${HOME_MCP_DOMAIN:?set HOME_MCP_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+
+networks:
+  edge: {}
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

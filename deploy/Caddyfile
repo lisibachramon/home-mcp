@@ -1,0 +1,24 @@
+# Caddy reverse proxy for home-mcp with automatic HTTPS (Let's Encrypt).
+# The domain comes from the HOME_MCP_DOMAIN environment variable.
+#
+# Caddy obtains and renews a real TLS certificate automatically as long as the
+# domain's DNS points at this host and ports 80/443 are reachable.
+
+{$HOME_MCP_DOMAIN} {
+	encode zstd gzip
+
+	# Streamable HTTP / SSE: disable response buffering so events flush promptly.
+	reverse_proxy home-mcp:8848 {
+		flush_interval -1
+	}
+
+	# Belt-and-suspenders: the app already enforces the bearer token, but you can
+	# additionally restrict by source IP here if you want, e.g.:
+	# @blocked not remote_ip 100.64.0.0/10 192.168.0.0/16
+	# respond @blocked 403
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "home-mcp"
+version = "0.1.0"
+description = "Secure, self-hosted MCP server that lets authorized Claude sessions control Docker, deploy stacks, and drive the GitHub CLI on your home server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "home-mcp" }]
+keywords = ["mcp", "claude", "docker", "github", "homelab", "self-hosted"]
+dependencies = [
+    "mcp>=1.9.0",
+    "docker>=7.0.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+home-mcp = "home_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/home_mcp"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
